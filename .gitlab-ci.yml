@@ -1,0 +1,49 @@
+image: registry.gitlab.com/gitlab-org/terraform-images/stable:latest
+variables:
+  TF_ROOT: ${CI_PROJECT_DIR}/terraform
+  TF_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${CI_PROJECT_NAME}
+
+cache:
+  key: example-production
+  paths:
+    - ${TF_ROOT}/.terraform
+
+before_script:
+  - cd ${TF_ROOT}
+
+stages:
+  - deploy
+  - destroy
+
+deploy:
+  stage: deploy
+  script:
+    - cd ..
+    - export lowercaseproject=$(echo "$CI_PROJECT_NAME" | tr '[:upper:]' '[:lower:]')
+    - export lowercaseproject=$(echo $lowercaseproject | sed 's/[^a-zA-z0-9]//g')
+    - sed -i "s/__project_name__/${lowercaseproject:0:36}/g" ./terraform/main.tf
+    - sed -i "s/__project_name__/${lowercaseproject:0:36}/g" ./terraform/terraform-dev.tfvars
+    - apk add zip
+    - cd ./files/app
+    - zip -r ../../${lowercaseproject:0:36}.zip ./
+    - cd ../../terraform
+    - gitlab-terraform init
+    - gitlab-terraform plan --var-file="terraform-dev.tfvars" -replace=aws_instance.'app_instance' -replace=aws_s3_object.'upload_artefact'
+    - gitlab-terraform apply
+  when: manual
+  only:
+    - main
+    - danTerraform
+
+
+# Allow manual destruction to save resources
+destroy:
+  stage: destroy
+  script:
+    - gitlab-terraform destroy --var-file="terraform-dev.tfvars"
+  dependencies:
+    - deploy
+  when: manual
+  only:
+    - main
+    - danTerraform
